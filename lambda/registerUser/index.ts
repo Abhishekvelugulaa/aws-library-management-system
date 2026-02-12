@@ -2,9 +2,9 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   PutCommand,
-  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
+
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
 
@@ -17,7 +17,6 @@ export const handler = async (event: any) => {
   console.log("Incoming Event:", JSON.stringify(event));
 
   try {
-    // ✅ Validate request body exists
     if (!event.body) {
       return {
         statusCode: 400,
@@ -28,7 +27,6 @@ export const handler = async (event: any) => {
     const body = JSON.parse(event.body);
     const { mobileNumber } = body;
 
-    // ✅ Validate mobileNumber presence
     if (!mobileNumber) {
       return {
         statusCode: 400,
@@ -36,7 +34,6 @@ export const handler = async (event: any) => {
       };
     }
 
-    // ✅ Validate type
     if (typeof mobileNumber !== "string") {
       return {
         statusCode: 400,
@@ -44,7 +41,6 @@ export const handler = async (event: any) => {
       };
     }
 
-    // ✅ Validate 10-digit Indian mobile number
     if (!/^[1-9][0-9]{9}$/.test(mobileNumber)) {
       return {
         statusCode: 400,
@@ -54,48 +50,41 @@ export const handler = async (event: any) => {
       };
     }
 
-    // ✅ Check if user already exists
-    const existingUser = await docClient.send(
-      new GetCommand({
-        TableName: USERS_TABLE,
-        Key: { mobileNumber },
-      })
-    );
-
-    if (existingUser.Item) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: "User already exists" }),
-      };
+    // 🔥 Atomic write — no race condition
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: USERS_TABLE,
+          Item: {
+            mobileNumber,
+            createdAt: new Date().toISOString(),
+            borrowCount: 0,
+          },
+          ConditionExpression: "attribute_not_exists(mobileNumber)",
+        })
+      );
+    } catch (error: any) {
+      if (error.name === "ConditionalCheckFailedException") {
+        return {
+          statusCode: 400,
+          body: JSON.stringify({ message: "User already exists" }),
+        };
+      }
+      throw error;
     }
 
-    // ✅ Create new user
-    await docClient.send(
-      new PutCommand({
-        TableName: USERS_TABLE,
-        Item: {
-          mobileNumber,
-          createdAt: new Date().toISOString(),
-          borrowCount: 0,
-        },
-      })
-    );
-
-    // ✅ Publish SNS notification (non-blocking)
+    // 🔔 SNS notification (non-blocking)
     try {
       await snsClient.send(
         new PublishCommand({
           TopicArn: SNS_TOPIC_ARN,
           Subject: "Library Registration Notification",
-          Message: `
-SMS sent to mobile number ${mobileNumber}
-User registered successfully in Library Management System.
-          `,
+          Message: `User with mobile number ${mobileNumber} registered successfully.`,
         })
       );
     } catch (snsError) {
       console.error("SNS publish failed:", snsError);
-      // Do NOT fail registration if notification fails
+      // Registration should not fail if SNS fails
     }
 
     return {
