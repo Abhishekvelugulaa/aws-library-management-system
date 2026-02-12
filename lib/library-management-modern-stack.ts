@@ -32,7 +32,7 @@ userRegistrationTopic.addSubscription(
   new subscriptions.EmailSubscription('avelugul@gitam.in')
 );
 
-
+/// lambdas-----
     const registerUserLambda = new lambdaNodejs.NodejsFunction(this, 'RegisterUserLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       entry: 'lambda/registerUser/index.ts',
@@ -49,26 +49,48 @@ userRegistrationTopic.addSubscription(
 
       },
     });
+    const getUserLambda = new lambda.Function(this, 'GetUserLambda', {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  handler: 'index.handler',
+  code: lambda.Code.fromAsset('lambda/getUser'),
+  environment: {
+    USERS_TABLE: usersTable.tableName,
+  },
+});
+
     
     const api = new apigateway.RestApi(this, 'LibraryApi', {
-      restApiName: 'Library Service API',
-      deployOptions: {
-        stageName: 'dev',
-      },
-    });
-    
-    
-    
-    // REGISTE API
-    const registerResource = api.root.addResource('register');
-    registerResource.addMethod(
-      'POST',
-      new apigateway.LambdaIntegration(registerUserLambda)
-    );
+  restApiName: 'Library Service API',
+  deployOptions: {
+    stageName: 'dev',
+  },
+});
+
+// USERS RESOURCE
+const usersResource = api.root.addResource('users');
+
+// POST /users
+usersResource.addMethod(
+  'POST',
+  new apigateway.LambdaIntegration(registerUserLambda)
+);
+
+// GET /users/{mobileNumber}
+const singleUserResource = usersResource.addResource('{mobileNumber}');
+
+singleUserResource.addMethod(
+  'GET',
+  new apigateway.LambdaIntegration(getUserLambda)
+);
+
+
+
 
     /// PERMISSIONS----
     usersTable.grantReadWriteData(registerUserLambda);
     userRegistrationTopic.grantPublish(registerUserLambda);
+    usersTable.grantReadData(getUserLambda);
+
 
 
     
