@@ -25,6 +25,7 @@
     "@aws-sdk/client-sns": "^3.987.0",
     "@aws-sdk/lib-dynamodb": "^3.986.0",
     "aws-cdk-lib": "^2.237.1",
-    "constructs": "^10.0.0"
+    "constructs": "^10.0.0",
+    "uuid": "^13.0.0"
   }
 }

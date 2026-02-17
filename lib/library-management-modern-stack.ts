@@ -23,6 +23,61 @@ export class LibraryManagementModernStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY, // dev only
     });
+    // books table ()
+    const booksTable = new dynamodb.Table(this, 'BooksTable', {
+  tableName: 'Books',
+  partitionKey: {
+    name: 'bookId',
+    type: dynamodb.AttributeType.STRING,
+  },
+  billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+  removalPolicy: cdk.RemovalPolicy.DESTROY, // dev only
+});
+//GSI
+  booksTable.addGlobalSecondaryIndex({
+  indexName: 'TitleAuthorIndex',
+  partitionKey: {
+    name: 'title',
+    type: dynamodb.AttributeType.STRING,
+  },
+  sortKey: {
+    name: 'author',
+    type: dynamodb.AttributeType.STRING,
+  },
+  projectionType: dynamodb.ProjectionType.ALL,
+});
+// transaction Table --
+const borrowTransactionsTable = new dynamodb.Table(this, 'BorrowTransactionsTable', {
+  tableName: 'BorrowTransactions',
+  partitionKey: {
+    name: 'mobileNumber',
+    type: dynamodb.AttributeType.STRING,
+  },
+  sortKey: {
+    name: 'borrowedAt',
+    type: dynamodb.AttributeType.STRING,
+  },
+  billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+  stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+});
+
+borrowTransactionsTable.addGlobalSecondaryIndex({
+  indexName: 'BookBorrowIndex',
+  partitionKey: {
+    name: 'bookId',
+    type: dynamodb.AttributeType.STRING,
+  },
+  sortKey: {
+    name: 'borrowedAt',
+    type: dynamodb.AttributeType.STRING,
+  },
+  projectionType: dynamodb.ProjectionType.ALL,
+});
+
+
+
+
     //SNS NOTIFICATION -f1
     const userRegistrationTopic = new sns.Topic(this, 'UserRegistrationTopic', {
   displayName: 'User Registration Notifications',
@@ -58,6 +113,42 @@ userRegistrationTopic.addSubscription(
   },
 });
 
+const addBookLambda = new lambdaNodejs.NodejsFunction(this, 'AddBookLambda', {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  entry: 'lambda/addBook/index.ts',
+  handler: 'handler',
+  bundling: {
+    externalModules: [],
+  },
+  environment: {
+    BOOKS_TABLE: booksTable.tableName,
+  },
+});
+const listBooksLambda = new lambdaNodejs.NodejsFunction(this, 'ListBooksLambda', {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  entry: 'lambda/listBooks/index.ts',
+  handler: 'handler',
+  environment: {
+    BOOKS_TABLE: booksTable.tableName,
+  },
+});
+
+const borrowBookLambda = new lambdaNodejs.NodejsFunction(this, 'BorrowBookLambda', {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  entry: 'lambda/borrowBook/index.ts',
+  handler: 'handler',
+  bundling: {
+    externalModules: [],
+  },
+  environment: {
+    USERS_TABLE: usersTable.tableName,
+    BOOKS_TABLE: booksTable.tableName,
+    BORROW_TABLE: borrowTransactionsTable.tableName,
+  },
+});
+
+
+
     
     const api = new apigateway.RestApi(this, 'LibraryApi', {
   restApiName: 'Library Service API',
@@ -65,6 +156,7 @@ userRegistrationTopic.addSubscription(
     stageName: 'dev',
   },
 });
+//api resources
 
 // USERS RESOURCE
 const usersResource = api.root.addResource('users');
@@ -82,6 +174,27 @@ singleUserResource.addMethod(
   'GET',
   new apigateway.LambdaIntegration(getUserLambda)
 );
+// BOOKS RESOURCE
+const booksResource = api.root.addResource('books');
+
+// POST /books
+booksResource.addMethod(
+  'POST',
+  new apigateway.LambdaIntegration(addBookLambda)
+);
+//GET /books
+booksResource.addMethod(
+  'GET',
+  new apigateway.LambdaIntegration(listBooksLambda)
+);
+
+// POST /borrow
+const borrowResource = api.root.addResource('borrow');
+
+borrowResource.addMethod(
+  'POST',
+  new apigateway.LambdaIntegration(borrowBookLambda)
+);
 
 
 
@@ -90,6 +203,13 @@ singleUserResource.addMethod(
     usersTable.grantReadWriteData(registerUserLambda);
     userRegistrationTopic.grantPublish(registerUserLambda);
     usersTable.grantReadData(getUserLambda);
+    booksTable.grantReadWriteData(addBookLambda);
+    booksTable.grantReadData(listBooksLambda);
+    usersTable.grantReadWriteData(borrowBookLambda);
+    booksTable.grantReadWriteData(borrowBookLambda);
+    borrowTransactionsTable.grantReadWriteData(borrowBookLambda);
+
+
 
 
 
